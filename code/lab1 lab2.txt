@@ -1,0 +1,338 @@
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+
+
+int main(int argc, char *argv[])
+{	
+	int tick;
+ 	if(argc < 2){
+	  fprintf(2, "usage: sleep sceonds\n");
+	  exit(1);										
+ 	}
+ 	tick = atoi(argv[1]);
+ 	sleep(tick);
+ 	exit(0); 
+ }
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+int main(int argc , char *argv[]) {	
+	
+	int p[2];
+	int pid;
+	char buf[2];
+	
+	pipe(p);
+	
+	if(fork() == 0) {
+		pid = getpid();
+		read(p[0], buf, 1);
+		close(p[0]);
+		
+		printf("%d: Receive ping\n",pid);
+		write(p[1], "0", 1);
+		close(p[1]);
+	}
+	
+	else{
+		pid = getpid();
+		write(p[1], "0", 1);
+		close(p[1]);
+		
+		wait(0);
+
+		read(p[0], buf, 1);
+		close(p[0]);
+		printf("%d: Receive pong\n",pid);		
+	}
+	exit(0);
+}
+
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+
+void c_process(int p[2]){
+	int real;
+	int prime;
+	int num;
+	int pp[2];
+	
+	close(p[1]);
+	real = read(p[0], &prime, 4);
+	if(real == 0){
+		close(p[0]);
+		exit(1);	
+	}
+	printf("prime %d\n", prime);
+	pipe(pp);
+	
+	if(fork() == 0 ){
+		close(p[0]);
+		c_process(pp);
+	}
+	
+	else{
+		close(pp[0]);
+		while(1){
+			real = read(p[0], &num, 4);
+			if(real == 0){
+				break;
+			}
+		if(num % prime !=0){
+			write(pp[1], &num, 4);
+		}						
+	      }
+	      close(p[0]);
+	      close(pp[1]);
+	      wait(0);
+       }
+       exit(0);
+}
+
+int main(int argc, char *argv[]){
+	
+	int i;
+	int p[2];
+	
+	if(argc<1){
+		fprintf(2,"usage: primes\n");
+		exit(1);		
+	}
+	
+	pipe(p);
+	
+	if(fork() == 0){
+	     c_process(p);
+	}
+	
+	else{
+		close(p[0]);
+		for(i = 2; i <= 35; i++) {
+			write(p[1], &i, 4);
+		}
+	        close(p[1]);
+	        wait(0);	
+	}
+	
+	exit(0);
+}
+
+
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+
+char*
+fmtname(char *path)
+{
+  char *p;
+
+
+  for(p=path+strlen(path); p >= path && *p != '/'; p--) 
+    ;
+  p++;
+  
+  return p;
+}
+
+void
+find(char *path, char *filename){
+  
+  char buf[512], *p;
+  int fd;
+  struct dirent de; 
+  struct stat st;
+
+  if((fd = open(path, 0)) < 0){
+    fprintf(2, "find: cannot open %s\n", path);
+    return;
+  }
+
+  if(fstat(fd, &st) < 0){
+    fprintf(2, "find: cannot stat %s\n", path);
+    close(fd);
+    return;
+  }
+
+  switch(st.type){
+  case T_FILE:
+    if (strcmp(fmtname(path),filename) == 0)
+        printf("%s\n",path);
+    break;
+
+  case T_DIR:
+    if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
+      printf("find: path too long\n");
+      break;
+    }
+    strcpy(buf, path); 
+    p = buf+strlen(buf);
+    *p++ = '/';
+    while(read(fd, &de, sizeof(de)) == sizeof(de)){
+      if(de.inum == 0 || strcmp(de.name,"..") == 0 || strcmp(de.name,".") == 0) 
+         continue;
+      memmove(p, de.name, DIRSIZ); 
+      p[DIRSIZ] = 0;
+      find(buf, filename);
+      }
+    break;
+  }
+  close(fd);
+}
+
+int
+main(int argc, char *argv[])
+{
+
+  if(argc < 3){
+    fprintf(2,"usage: find directory filename\n");
+    exit(1);
+  }
+  
+  find(argv[1], argv[2]);
+  exit(0);
+}
+
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/param.h"
+
+
+int main(int argc, char *argv[])
+{
+  char buf[512];
+  char* full_argv[MAXARG];
+  int i;
+  int len;
+  if(argc < 2){
+    fprintf(2, "usage: xargs your_command\n");
+    exit(1);
+  }
+
+  if (argc + 1 > MAXARG) {
+      fprintf(2, "too many args\n");
+      exit(1);
+  }
+
+  for (i = 1; i < argc; i++) {
+      full_argv[i-1] = argv[i];
+  }
+
+  full_argv[argc] = 0;
+  while (1) {
+      i = 0;
+      while (1) {
+        len = read(0,&buf[i],1);
+        if (len == 0 || buf[i] == '\n') 
+        break;
+        i++;
+      }
+      
+      if (i == 0) 
+      	break;
+      	
+      buf[i] = 0;
+      full_argv[argc-1] = buf;
+      
+      if (fork() == 0) {
+        exec(full_argv[0],full_argv);
+        exit(0);
+      }
+      
+       else {
+        wait(0);
+      }
+  }
+  exit(0);
+}
+
+
+sys_trace(void)
+{
+  int mask;
+  if(argint(0, &mask) < 0)
+    return -1;
+  myproc()->mask = mask;
+  return 0;
+}
+
+void
+syscall(void)
+{
+  char const *syscall_names[] = {"fork", "exit", "wait", "pipe", "read",
+  "kill", "exec", "fstat", "chdir", "dup", "getpid", "sbrk", "sleep",
+  "uptime", "open", "write", "mknod", "unlink", "link", "mkdir","close","trace","sysinfo"};
+
+  int num;
+  struct proc *p = myproc();
+
+  num = p->trapframe->a7;
+  if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    p->trapframe->a0 = syscalls[num]();
+    if ((p->mask) & (1 << num)){
+      printf("%d: syscall %s -> %d\n", p->pid, syscall_names[num - 1], p->trapframe->a0);
+    }
+  } else {
+    printf("%d %s: unknown sys call %d\n",
+            p->pid, p->name, num);
+    p->trapframe->a0 = -1;
+  }
+}
+
+
+freemem(void)
+{
+  struct run *r;
+  uint64 freepage = 0;
+  acquire(&kmem.lock);
+  r = kmem.freelist;
+  while (r)
+  {
+    freepage += 1;
+    r = r->next;
+  }
+  release(&kmem.lock);
+  return (freepage << 12);
+}
+
+
+unusedproc(void)
+{
+  struct proc *p;
+  uint64 unused = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++)
+  {
+    if(p->state != UNUSED) {
+      unused++;
+    }
+  }
+
+  return unused;
+}
+
+
+sys_sysinfo(void)
+{
+  uint64 addr;
+  if(argaddr(0, &addr) < 0)
+    return -1;
+  struct proc *p = myproc();
+  struct sysinfo info;
+  info.freemem = freemem();
+  info.nproc = unusedproc();    
+  if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+      return -1;
+  return 0;
+}
